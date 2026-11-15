@@ -4837,7 +4837,7 @@ def add_attr_val(dev, logic_table, attrs, attr, val):
         attrs.add(attrval)
 
 def get_pins(device):
-    if device not in {"GW1N-1", "GW1NZ-1", "GW1N-4", "GW1N-9", "GW1NR-9", "GW1N-9C", "GW1NR-9C", "GW1NSR-4C", "GW1N-1P5C", "GW2A-18", "GW2A-18C", "GW2AR-18C", "GW5A-25A", "GW5AT-60B", "GW5AST-138C"}:
+    if device not in {"GW1N-1", "GW1NZ-1", "GW1N-4", "GW1N-9", "GW1NR-9", "GW1N-9C", "GW1NR-9C", "GW1NSR-4C", "GW1N-1P5C", "GW1N-2C", "GW2A-18", "GW2A-18C", "GW2AR-18C", "GW5A-25A", "GW5AT-60B", "GW5AST-138C"}:
         raise Exception(f"unsupported device {device}")
     pkgs = pindef.all_packages(device)
     res = {}
@@ -4949,11 +4949,17 @@ def json_pinout(device):
             "GW5AST-138C": pins,
         }, res_bank_pins)
     elif device == "GW1N-2":
-        # GW1N-2 uses the GW1N-1P5C vendor data (same die). Key the pinout under the
-        # vendor name (downstream dat_fill_io_cfgs/pindef expect params['device']),
-        # and also under GW1N-2 for nextpnr compatibility.
-        pkgs, pins, bank_pins = get_pins("GW1N-1P5C")
+        # The GW1N-2 die is sold as GW1N-2C (GW1N-LV2/UV2 parts) and as GW1N-1P5C.
+        # The fuse file of the two is the same; the packages are not. Take the
+        # packages of both, keyed under the vendor names (dat_fill_io_cfgs/pindef
+        # expect params['device']) and under GW1N-2 for nextpnr.
+        pkgs, pins, bank_pins = get_pins("GW1N-2C")
+        pkgs_1p5, pins_1p5, bank_pins_1p5 = get_pins("GW1N-1P5C")
+        pkgs = {**pkgs_1p5, **pkgs}
+        pins = {**pins_1p5, **pins}
+        bank_pins = {**bank_pins_1p5, **bank_pins}
         return (pkgs, {
+            "GW1N-2C": pins,
             "GW1N-1P5C": pins,
             "GW1N-2": pins,
         }, bank_pins)
