@@ -309,6 +309,13 @@ def set_corners_io(db, device):
         db.corner_tiles_io[db.rows - 1, 0]           = 'L'
         db.corner_tiles_io[0, db.cols - 1]           = 'R'
         db.corner_tiles_io[db.rows - 1, db.cols - 1] = 'R'
+    elif device in {'GW1N-2'}:
+        # The corner cells hold IOR1, IOR19 and IOL19 (the top left one has the
+        # PLL and no pins).
+        db.corner_tiles_io[0, 0]                     = 'L'
+        db.corner_tiles_io[db.rows - 1, 0]           = 'L'
+        db.corner_tiles_io[0, db.cols - 1]           = 'R'
+        db.corner_tiles_io[db.rows - 1, db.cols - 1] = 'R'
     else:
         db.corner_tiles_io[0, 0]                     = 'T'
         db.corner_tiles_io[db.rows - 1, 0]           = 'B'
