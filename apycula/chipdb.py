@@ -556,6 +556,10 @@ def fse_pll(device, fse, ttyp):
             bel = bels.setdefault('RPLLA', Bel())
         elif ttyp == 89:
             bel = bels.setdefault('RPLLB', Bel())
+    elif device in {'GW1N-2'}:
+        # the PLL of this chip is a PLLO; its home cell is the corner
+        if ttyp == 50:
+            bel = bels.setdefault('PLLO', Bel())
     elif device in {'GW1NS-2'}:
         if ttyp in {87}:
             bel = bels.setdefault('RPLLA', Bel())
@@ -2459,6 +2463,9 @@ _pll_loc = {
  'GW1NZ-1':
    {'TRPLL0CLK0': (0, 17, 'F4'), 'TRPLL0CLK1': (0, 17, 'F5'),
     'TRPLL0CLK2': (0, 17, 'F6'), 'TRPLL0CLK3': (0, 17, 'F7'), },
+ 'GW1N-2':
+   {'TRPLL0CLK0': (0, 0, 'F4'), 'TRPLL0CLK1': (0, 0, 'F5'),
+    'TRPLL0CLK2': (0, 0, 'F6'), 'TRPLL0CLK3': (0, 0, 'F7'), },
  'GW1NS-2':
    {'TRPLL0CLK0': (5, 19, 'F4'), 'TRPLL0CLK1': (5, 19, 'F7'),
     'TRPLL0CLK2': (5, 19, 'F5'), 'TRPLL0CLK3': (5, 19, 'F6'), },
@@ -2508,7 +2515,7 @@ def fse_create_pll_clock_aliases(db, device):
         for col in range(db.cols):
             for w_dst, w_srcs in db[row, col].clock_pips.items():
                 for w_src in w_srcs.keys():
-                    if device in {'GW1N-1', 'GW1NZ-1', 'GW1NS-2', 'GW1NS-4', 'GW1N-4', 'GW1N-9C', 'GW1N-9', 'GW2A-18', 'GW2A-18C'}:
+                    if device in {'GW1N-1', 'GW1NZ-1', 'GW1N-2', 'GW1NS-2', 'GW1NS-4', 'GW1N-4', 'GW1N-9C', 'GW1N-9', 'GW2A-18', 'GW2A-18C'}:
                         if w_src in _pll_loc[device].keys():
                             # Himbaechel node
                             db.nodes.setdefault(w_src, ("PLL_O", set()))[1].add((row, col, w_src))
@@ -2521,7 +2528,7 @@ def fse_create_pll_clock_aliases(db, device):
             if (row, col) in db.hclk_pips:
                 for w_dst, w_srcs in db.hclk_pips[row, col].items():
                     for w_src in w_srcs.keys():
-                        if device in {'GW1N-1', 'GW1NZ-1', 'GW1NS-2', 'GW1NS-4', 'GW1N-4', 'GW1N-9C', 'GW1N-9', 'GW2A-18', 'GW2A-18C'}:
+                        if device in {'GW1N-1', 'GW1NZ-1', 'GW1N-2', 'GW1NS-2', 'GW1NS-4', 'GW1N-4', 'GW1N-9C', 'GW1N-9', 'GW2A-18', 'GW2A-18C'}:
                             if w_src in _pll_loc[device]:
                                 db.nodes.setdefault(w_src, ("PLL_O", set()))[1].add((row, col, w_src))
 
@@ -4995,6 +5002,22 @@ _plla_inputs = [(0, 'RESET'), (2, 'RESET_I'), (4, 'CLKIN'), (5, 'CLKFB'), (91, '
                 (207, 'MDAINC'), (208, 'MDWDI0'), (209, 'MDWDI1'), (210, 'MDWDI2'), (211, 'MDWDI3'),
                 (212, 'MDWDI4'), (213, 'MDWDI5'), (214, 'MDWDI6'), (215, 'MDWDI7'),]
 _pll_outputs = [(0, 'CLKOUT'), (1, 'LOCK'), (2, 'CLKOUTP'), (3, 'CLKOUTD'), (4, 'CLKOUTD3')]
+# PLLO (GW1N-2). The dat file has no port table for it, the wires were found
+# with vendor builds. The inputs sit on consecutive A0..D7 wires of the three
+# cells of the left edge that begin at the PLL's cell:
+# {row offset: (first wire, [ports])}.
+_pllo_inputs = {
+    0: (3,  [f'IDSEL{i}' for i in range(6)] + [f'FBDSEL{i}' for i in range(6)] +
+            [f'ODSELA{i}' for i in range(7)] + [f'ODSELB{i}' for i in range(7)] +
+            [f'ODSELC{i}' for i in range(3)]),
+    1: (2,  ['RESET', 'RESET_P', 'RESET_I', 'RESET_S', 'ENCLKA', 'ENCLKB', 'ENCLKC', 'ENCLKD', None] +
+            [f'DTA{i}' for i in range(4)] + [f'DTB{i}' for i in range(4)] +
+            [f'ICPSEL{i}' for i in range(5)] + [f'LPFRES{i}' for i in range(3)] +
+            ['PSDIR', 'PSSEL0', 'PSSEL1', 'PSPULSE']),
+    2: (0,  [f'ODSELC{i}' for i in range(3, 7)] + [f'ODSELD{i}' for i in range(7)]),
+}
+_pllo_clock_inputs = {'CLKIN': 'CLK0', 'CLKFB': 'CLK2'}
+_pllo_outputs = {'LOCK': 'F2', 'CLKOUTA': 'F4', 'CLKOUTB': 'F5', 'CLKOUTC': 'F6', 'CLKOUTD': 'F7'}
 _plla_outputs = [(1, 'LOCK'), (10, 'CLKOUT0'), (11, 'CLKOUT1'), (12, 'CLKOUT2'), (13, 'CLKOUT3'),
                  (14, 'CLKOUT4'), (15, 'CLKOUT5'), (16, 'CLKOUT6'),
                  (24, 'MDRDO0'), (25, 'MDRDO1'), (26, 'MDRDO2'), (27, 'MDRDO3'), (28, 'MDRDO4'),
@@ -6491,6 +6514,26 @@ def dat_portmap(dat, dev, device):
                     for dst in hclk_pip_dsts:
                         if (row, col) in dev.hclk_pips and dst in dev.hclk_pips[row, col]:
                             dev.hclk_pips[row, col][bel.portmap[dst[4:]]] = dev.hclk_pips[row, col].pop(dst)
+                elif name == 'PLLO':
+                    for row_off, (first, ports) in _pllo_inputs.items():
+                        for idx, nam in enumerate(ports, first):
+                            if not nam:
+                                continue
+                            wire = f'{"ABCD"[idx // 8]}{idx % 8}'
+                            if row_off == 0:
+                                bel.portmap[nam] = wire
+                            else:
+                                # not our cell, make an alias
+                                bel.portmap[nam] = f'PLLO{nam}{wire}'
+                                # Himbaechel node
+                                dev.nodes.setdefault(f'X{col}Y{row}/PLLO{nam}{wire}', ("PLL_I", {(row, col, f'PLLO{nam}{wire}')}))[1].add((row + row_off, col, wire))
+                    bel.portmap.update(_pllo_clock_inputs)
+                    for nam, wire in _pllo_outputs.items():
+                        bel.portmap[nam] = wire
+                        # Himbaechel node
+                        if nam != 'LOCK':
+                            global_name = get_pllout_global_name(row, col, wire, device)
+                            dev.nodes.setdefault(global_name, ("PLL_O", set()))[1].add((row, col, wire))
                 elif name == 'PLLVR':
                     pll_idx = 0
                     if col != 27:
@@ -6825,6 +6868,7 @@ _pll_pads = {
                 'IOR4B' : (0, 17, 'FB_C', 'PLL') },
     'GW1NZ-1': { 'IOR5A' : (0, 17, 'CLKIN_T', 'PLL'),
                  'IOR5B' : (0, 17, 'CLKIN_C', 'PLL') },
+    'GW1N-2': { 'IOL5A' : (0, 0, 'CLKIN_T', 'PLL') },
     'GW1N-4': { 'IOL3A' : (0, 9, 'CLKIN_T', 'PLL'),
                 'IOL3B' : (0, 9, 'CLKIN_C', 'PLL'),
                 'IOL4A' : (0, 9, 'FB_T', 'PLL'),
