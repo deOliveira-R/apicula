@@ -1809,6 +1809,11 @@ class Device:
                     if not bank_desc.bank_vccio:
                         if bank_desc.has_outputs:
                             bank_desc.set_bank_vccio_by_io_type(bank_desc.io_type)
+                        elif self.chipdb.device_name == 'GW1N-2' and bank_desc.set_attr_bels.get('IO_TYPE'):
+                            # A bank with inputs only whose pins name an IO_TYPE:
+                            # the vendor tool takes the bank voltage from it
+                            # (checked on the GW1N-2 against the IDE).
+                            bank_desc.set_bank_vccio_by_io_type(bank_desc.io_type)
                         else:
                             bank_desc.set_bank_vccio_by_io_type(self.get_default_io_type())
 

@@ -2590,7 +2590,10 @@ def fse_create_pll_clock_aliases(db, device):
 def fse_iologic(device, fse, ttyp):
     bels = {}
     # some iocells nave no iologic
-    if ttyp in {48, 49, 50, 51}:
+    # GW1N-2: the top right corner cell (type 51, pads IOR1A/IOR1B) does have
+    # it; the vendor tool places IDDRC/ODDRC there and the fuses are the usual
+    # IOLOGICA/IOLOGICB tables.
+    if ttyp in {48, 49, 50, 51} and not (device == 'GW1N-2' and ttyp == 51):
         return bels
     if device in {'GW1N-1', 'GW1NZ-1', 'GW1NS-2', 'GW1N-4', 'GW1NS-4'} and ttyp in {86, 87}:
         return bels
