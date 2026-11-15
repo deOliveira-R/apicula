@@ -4722,6 +4722,23 @@ class GW1N_1(GW1N):
         return super().__repr__() + ""
 
 ################################################################
+class GW1N_2(GW1N):
+    """ GW1N-2 chip (GW1N-UV2, also sold as GW1N-1P5) """
+    def __init__(self, cli_args: CliArgs, pnr: Netlist):
+        super().__init__(cli_args, pnr)
+
+    #==============================
+    #========== Misc
+    #==============================
+    def get_BUFG_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
+        """ Logic -> clock gate """
+        return []
+
+    # debug
+    def __repr__(self):
+        return super().__repr__() + ""
+
+################################################################
 class GW1NZ_1(GW1N):
     """ GW1NZ-1 chip. Tangnano1k board """
     def add_sp_sdp_bsram_attrs(self, av: set[int]) -> None:
@@ -7363,6 +7380,8 @@ def create_device(cli_args: CliArgs, pnr: Netlist) -> Device:
         return GW1N_1(cli_args, pnr)
     if dev == 'GW1NZ-1':
         return GW1NZ_1(cli_args, pnr)
+    if dev == 'GW1N-2':
+        return GW1N_2(cli_args, pnr)
     if dev == 'GW1N-4':
         return GW1N_4(cli_args, pnr)
     if dev == 'GW1NS-4':
@@ -7387,7 +7406,7 @@ def create_device(cli_args: CliArgs, pnr: Netlist) -> Device:
 
 def create_output_bitstream(cli_args: CliArgs, device: Device) -> Bitstream:
     dev = cli_args.get_device()
-    if dev in {'GW1N-1', 'GW1NZ-1', 'GW1N-4', 'GW1NS-4', 'GW1N-9', 'GW1N-9C', 'GW2A-18', 'GW2A-18C'}:
+    if dev in {'GW1N-1', 'GW1NZ-1', 'GW1N-2', 'GW1N-4', 'GW1NS-4', 'GW1N-9', 'GW1N-9C', 'GW2A-18', 'GW2A-18C'}:
         return Bitstream_GW1_2(cli_args, device)
     elif dev in {'GW5A-25A'}:
         return Bitstream_GW5A_25A(cli_args, device)
