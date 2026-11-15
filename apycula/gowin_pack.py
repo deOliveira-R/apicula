@@ -2940,8 +2940,16 @@ class Device:
                 else:
                     self.chipdb.get_bsram_attr_val(AttrVal('SDPA_BEHB', 'DISABLE'), av)
                     self.chipdb.get_bsram_attr_val(AttrVal('SDPA_BELB', 'DISABLE'), av)
-                self.chipdb.get_bsram_attr_val(AttrVal('SDPB_BEHB', 'DISABLE'), av)
-                self.chipdb.get_bsram_attr_val(AttrVal('SDPB_BELB', 'DISABLE'), av)
+                # GW1N-2 (IDE 1.9.12.04): with constant byte enables on the
+                # write port the vendor also enables port B's when the read
+                # port is 16 bits or wider. Not checked on other chips.
+                val_b = int(bsram_bel.cell.parms.get('BIT_WIDTH_1', bin(36 if self.is_9bit_bsram(bsram_bel) else 32)), 2)
+                if self.chipdb.device_name == 'GW1N-2' and constant_byte_enable and val_b >= 16:
+                    self.chipdb.get_bsram_attr_val(AttrVal('SDPB_BEHB', 'ENABLE'), av)
+                    self.chipdb.get_bsram_attr_val(AttrVal('SDPB_BELB', 'ENABLE'), av)
+                else:
+                    self.chipdb.get_bsram_attr_val(AttrVal('SDPB_BEHB', 'DISABLE'), av)
+                    self.chipdb.get_bsram_attr_val(AttrVal('SDPB_BELB', 'DISABLE'), av)
             else:
                 self.chipdb.get_bsram_attr_val(AttrVal('SDPA_BEHB', 'DISABLE'), av)
                 self.chipdb.get_bsram_attr_val(AttrVal('SDPA_BELB', 'DISABLE'), av)
@@ -3040,6 +3048,11 @@ class Device:
         elif val == 2:
             self.chipdb.get_bsram_attr_val(AttrVal('SPA_MODE', 'RBW'), av)
             self.chipdb.get_bsram_attr_val(AttrVal('SPB_MODE', 'RBW'), av)
+            # GW1N-2: the single port table lists the second half's
+            # read-before-write bit under SDPB_MODE (32 and 36 bit).
+            bit_width = int(bsram_bel.cell.parms.get('BIT_WIDTH', bin(36 if self.is_9bit_bsram(bsram_bel) else 32)), 2)
+            if self.chipdb.device_name == 'GW1N-2' and bit_width >= 32:
+                self.chipdb.get_bsram_attr_val(AttrVal('SDPB_MODE', 'RBW'), av)
 
         return self.common_bsram_handler(bsram_bel, av)
 
@@ -3067,6 +3080,13 @@ class Device:
             self.chipdb.get_bsram_attr_val(AttrVal('DPA_DATA_WIDTH', bw), av)
             if val in {16, 18}:
                 constant_byte_enable = self.pnr.is_constant_net(nets['ADA0'][0]) and self.pnr.is_constant_net(nets['ADA1'][0])
+                if self.chipdb.device_name == 'GW1N-2':
+                    # GW1N-2 (IDE 1.9.12.04): the vendor enables the byte
+                    # enables only when both ports are 16 or 18 bit wide and
+                    # both have constant byte enables. Not checked on other chips.
+                    val_b = int(bsram_bel.cell.parms.get('BIT_WIDTH_1', bin(36 if self.is_9bit_bsram(bsram_bel) else 32)), 2)
+                    constant_byte_enable = constant_byte_enable and val_b in {16, 18} \
+                            and self.pnr.is_constant_net(nets['ADB0'][0]) and self.pnr.is_constant_net(nets['ADB1'][0])
                 if constant_byte_enable:
                     self.chipdb.get_bsram_attr_val(AttrVal('DPA_BEHB', 'ENABLE'), av)
                     self.chipdb.get_bsram_attr_val(AttrVal('DPA_BELB', 'ENABLE'), av)
@@ -3087,6 +3107,10 @@ class Device:
             self.chipdb.get_bsram_attr_val(AttrVal('DPB_DATA_WIDTH', bw), av)
             if val in {16, 18}:
                 constant_byte_enable = self.pnr.is_constant_net(nets['ADB0'][0]) and self.pnr.is_constant_net(nets['ADB1'][0])
+                if self.chipdb.device_name == 'GW1N-2':
+                    val_a = int(bsram_bel.cell.parms.get('BIT_WIDTH_0', bin(36 if self.is_9bit_bsram(bsram_bel) else 32)), 2)
+                    constant_byte_enable = constant_byte_enable and val_a in {16, 18} \
+                            and self.pnr.is_constant_net(nets['ADA0'][0]) and self.pnr.is_constant_net(nets['ADA1'][0])
                 if constant_byte_enable:
                     self.chipdb.get_bsram_attr_val(AttrVal('DPB_BEHB', 'ENABLE'), av)
                     self.chipdb.get_bsram_attr_val(AttrVal('DPB_BELB', 'ENABLE'), av)
