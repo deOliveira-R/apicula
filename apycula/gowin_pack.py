@@ -2619,6 +2619,9 @@ class Device:
     def get_PLLVR_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
         self.error_not_supported_cell_type(bel)
 
+    def get_PLLO_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
+        self.error_not_supported_cell_type(bel)
+
     def get_CLKDIV_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
         hclk_idx, section_idx = self.get_hclk_sections(bel)
 
@@ -4726,6 +4729,155 @@ class GW1N_2(GW1N):
     """ GW1N-2 chip (GW1N-UV2, also sold as GW1N-1P5) """
     def __init__(self, cli_args: CliArgs, pnr: Netlist):
         super().__init__(cli_args, pnr)
+
+    #==============================
+    #========== Clocks
+    #==============================
+    def get_pll_bels(self, bel: BelDesc) -> Iterator[tuple[int, int]]:
+        """ The corner cell and the PLL cell below it """
+        for off in range(2):
+            yield (bel.x, bel.y + off)
+
+    def get_pll_attrvals(self, bel: BelDesc) -> set[int]:
+        """ PLLO attributes """
+        av = set()
+        cell_parms = bel.cell.parms
+
+        def is_true(name):
+            return cell_parms.get(name, 'FALSE').strip() == 'TRUE'
+
+        def get_int(name, default):
+            return int(cell_parms.get(name, bin(default)), 2)
+
+        def err(msg):
+            raise Exception(f"PLLO {bel.cell.name}: {msg}")
+
+        # dividers
+        fclkin = float(cell_parms.get('FCLKIN', '100.0'))
+        idiv = 1 + get_int('IDIV_SEL', 0)
+        fbdiv = 1 + get_int('FBDIV_SEL', 0)
+        fref = fclkin / idiv
+        if fref < 3 or fref > 400:
+            err(f"the PFD frequency FCLKIN/(IDIV_SEL+1) = {fref}MHz is outside the permissible range of 3-400MHz.")
+        # the largest divisor has no fuses
+        self.chipdb.get_pll_attr_val(AttrVal('IDIV', idiv), av)
+        self.chipdb.get_pll_attr_val(AttrVal('FDIV', fbdiv), av)
+        if is_true('DYN_IDIV_SEL'):
+            self.chipdb.get_pll_attr_val(AttrVal('IDIVSEL', 'DYN'), av)
+        if is_true('DYN_FBDIV_SEL'):
+            self.chipdb.get_pll_attr_val(AttrVal('FDIVSEL', 'DYN'), av)
+
+        dyn_dpa = is_true('DYN_DPA_EN')
+        if dyn_dpa:
+            self.chipdb.get_pll_attr_val(AttrVal('DPAEN', 'ENABLE'), av)
+
+        odiv = {}
+        in_sel = {}
+        for ch in "ABCD":
+            odiv[ch] = get_int(f'ODIV{ch}_SEL', 6)
+            if odiv[ch] < 1 or odiv[ch] > 128:
+                err(f"ODIV{ch}_SEL = {odiv[ch]} is outside the range 1-128.")
+            self.chipdb.get_pll_attr_val(AttrVal(f'DIV{ch}', odiv[ch]), av)
+            if is_true(f'DYN_ODIV{ch}_SEL'):
+                self.chipdb.get_pll_attr_val(AttrVal(f'DIV{ch}_SEL', 'DYN'), av)
+            if cell_parms.get(f'CLKOUT{ch}_EN', 'TRUE').strip() == 'TRUE':
+                self.chipdb.get_pll_attr_val(AttrVal(f'CK{ch}', 'ENABLE'), av)
+
+            # divider source: VCO, the previous divider or CLKIN
+            in_sel[ch] = get_int(f'CLK{ch}_IN_SEL', 0)
+            if in_sel[ch] == 3:
+                val = 'BYPASS'
+            elif in_sel[ch] == 2 and ch != 'A':
+                val = 'CASCADE'
+            else:
+                val = 'VCO'
+            self.chipdb.get_pll_attr_val(AttrVal(f'CK{ch}_IN', val), av)
+            if ch != 'A' and in_sel['A'] == 3 and in_sel[ch] < 2:
+                err(f"CLK{ch}_IN_SEL conflicts with CLKA_IN_SEL = 2'b11, the source of DIV{ch} must be the previous divider or CLKIN.")
+            if get_int(f'CLK{ch}_OUT_SEL', 0):
+                self.chipdb.get_pll_attr_val(AttrVal(f'CK{ch}_OUT', 'BYPASS'), av)
+
+            # phase
+            if ch == 'A':
+                coarse, fine = 1, 0
+            else:
+                coarse = get_int(f'PS{ch}_COARSE', 1)
+                fine = get_int(f'PS{ch}_FINE', 0)
+                if coarse < 1 or coarse > odiv[ch]:
+                    err(f"PS{ch}_COARSE = {coarse} must be between 1 and ODIV{ch}_SEL = {odiv[ch]}.")
+                if fine < 0 or fine > 7:
+                    err(f"PS{ch}_FINE = {fine} is outside the range 0-7.")
+                if fine and in_sel[ch] >= 2:
+                    err(f"PS{ch}_FINE must be 0 when CLK{ch}_IN_SEL is 2'b1x.")
+                if is_true(f'DYN_PS{ch}_SEL'):
+                    self.chipdb.get_pll_attr_val(AttrVal(f'PS{ch}_SEL', 'DYN'), av)
+                if is_true(f'DTMS_EN{ch}'):
+                    if not dyn_dpa:
+                        err(f"DTMS_EN{ch} = TRUE needs DYN_DPA_EN = TRUE.")
+                    self.chipdb.get_pll_attr_val(AttrVal(f'DTMS_EN{ch}', 'ENABLE'), av)
+            self.chipdb.get_pll_attr_val(AttrVal(f'PS{ch}_COARSE', coarse), av)
+            self.chipdb.get_pll_attr_val(AttrVal(f'PS{ch}_FINE', fine + 1), av)
+
+        # duty cycle trim
+        for ch in "AB":
+            step = get_int(f'CLKOUT{ch}_DT_STEP', 0)
+            if step not in {0, 1, 2, 4}:
+                err(f"CLKOUT{ch}_DT_STEP = {step}, must be 0, 1, 2 or 4.")
+            sign = 'P' if get_int(f'CLKOUT{ch}_DT_DIR', 1) else 'M'
+            self.chipdb.get_pll_attr_val(AttrVal(f'DUTY_TRIM_{ch}', f'{sign}{step * 50}'), av)
+            if is_true(f'DYN_DT{ch}_SEL'):
+                self.chipdb.get_pll_attr_val(AttrVal(f'DT{ch}_SEL', 'DYN'), av)
+
+        # charge pump and loop filter resistor. "X" means that they are
+        # calculated from the frequencies as they are for the rPLL.
+        fvco = fref * fbdiv * odiv['A']
+        fclkin_idx, icp, r_idx = self.get_pll_pump(fref, fvco)
+        val = cell_parms.get('ICP_SEL', 'X')
+        if 'X' not in val:
+            icp = (int(val, 2) + 1) * 10
+        val = cell_parms.get('LPR_REF', 'X')
+        if 'X' not in val:
+            lpr = int(val, 2)
+            if lpr & (lpr - 1) or lpr > 64:
+                err(f"LPR_REF = {val} is not one of 7'b0000000, 7'b0000001 ... 7'b1000000.")
+            r_idx = lpr.bit_length()
+        self.chipdb.get_pll_attr_val(AttrVal('ICPSEL', int(icp)), av)
+        if r_idx:
+            self.chipdb.get_pll_attr_val(AttrVal('LPR', f'R{r_idx}'), av)
+        self.chipdb.get_pll_attr_val(AttrVal('FLDCOUNT', fclkin_idx), av)
+        if is_true('DYN_ICP_SEL'):
+            self.chipdb.get_pll_attr_val(AttrVal('ICPDYN_SEL', 'DYN'), av)
+        if is_true('DYN_RES_SEL'):
+            self.chipdb.get_pll_attr_val(AttrVal('LPR_SEL', 'DYN'), av)
+
+        # clock input: nextpnr sets INSEL when it uses the dedicated pin
+        val = cell_parms.get('INSEL', 'CLKIN1')
+        self.chipdb.get_pll_attr_val(AttrVal('INSEL', val), av)
+        # external feedback only if nextpnr left CLKFB connected
+        if cell_parms.get('CLKFB_SEL', 'INTERNAL').strip() == 'EXTERNAL' and bel.cell.connections.get('CLKFB'):
+            self.chipdb.get_pll_attr_val(AttrVal('FBSEL', 'CLKFB0'), av)
+        else:
+            self.chipdb.get_pll_attr_val(AttrVal('FBSEL', 'CLKFB3'), av)
+
+        for attr in ['IRSTEN', 'SRSTEN']:
+            val = 'ENABLE' if is_true(f'RESET_{attr[0]}_EN') else 'DISABLE'
+            self.chipdb.get_pll_attr_val(AttrVal(attr, val), av)
+
+        # set internal attrs
+        self.chipdb.get_pll_attr_val(AttrVal('PLOCK', 'DISABLE'), av)
+        self.chipdb.get_pll_attr_val(AttrVal('FLOCK', 'ENABLE'), av)
+        self.chipdb.get_pll_attr_val(AttrVal('FLTOP', 'ENABLE'), av)
+        self.chipdb.get_pll_attr_val(AttrVal('GMCMODE', 15), av)
+        self.chipdb.get_pll_attr_val(AttrVal('PDN', 'ENABLE'), av)
+        self.chipdb.get_pll_attr_val(AttrVal('PWDEN', 'ENABLE'), av)
+        self.chipdb.get_pll_attr_val(AttrVal('RSTEN', 'ENABLE'), av)
+        # the corner cell
+        for i in range(3):
+            self.chipdb.get_pll_attr_val(AttrVal(f'PLLREG{i}', 'ENABLE'), av)
+        return av
+
+    def get_PLLO_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
+        return self.common_pll_handler(bel)
 
     #==============================
     #========== Misc
