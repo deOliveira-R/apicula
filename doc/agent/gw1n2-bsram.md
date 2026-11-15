@@ -65,3 +65,27 @@ live `CE`, `OCE`, `RESET`, `WRE` and `BLKSEL` connect the primitive's pins
 straight to the user's nets: no added logic on `WRE`/`CE` (`NEED_SP_FIX`), on
 `BLKSEL` (`NEED_BLKSEL_FIX`) or after the output (`NEED_BSRAM_OUTREG_FIX`). The
 chip database sets only `HAS_SP32` for this device.
+
+## On the chip
+
+A design in which a microcontroller drives every block RAM input over SPI, makes
+single clock pulses and reads the outputs back was built by both flows and run on
+a GW1N-UV2QN48C7/I6: 188 operations (initial contents, writes, byte enables one
+at a time, write and read gating, block select, resets, each port clock alone).
+
+- `SDPB` 16/16 bypass, `SP` 32 bit with output register and `WRITE_MODE` 2, `DPB`
+  16/8, `SDPX9B` 36 to 9: the open build equals the vendor build in 187 of 188.
+- `pROM` 8, `SPX9` 9, `DPX9B` 18/18, `SDPB` 8 to 32 bypass with `ASYNC` reset:
+  equal in 186 of 188.
+- The three differing operations are the first read after configuration: the
+  open build returns the data, as the vendor's simulation model does; the vendor
+  build is one pulse late.
+
+Where the chip differs from the vendor's simulation model, in both builds alike:
+output bits above the port width are not zero; a write clocked while RESET is
+high does not happen; on a 16/18 or 9 bit read port the address bits below the
+word must be 0 or the output reads 0; `SDPB` 8 to 32 in bypass needs a second
+pulse for the whole word.
+
+The same four-RAM design under pseudo-random traffic gave identical signatures
+at 25 MHz and at 100 MHz from the PLLO.
