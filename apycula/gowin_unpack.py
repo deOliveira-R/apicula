@@ -123,6 +123,82 @@ def pll_attrs_refine(in_attrs):
         res.add(f'{attr}={new_val}')
     return res
 
+# PLLO (GW1N-2). Every row of its fuse table has a single attribute, so the
+# cell is decoded exactly: the value of an attribute is the one whose fuses are
+# the set fuses of that attribute.
+def pllo_attrvals(db, ttyp, tile):
+    attr_names = {num: name for name, num in attrids.pll_attrids.items()}
+    logicinfo = db.rev_logicinfo('PLL')
+    fuses = {}
+    for key, bits in db.shortval[ttyp]['PLL'].items():
+        # a negative key is the fuse of the default value
+        if key[0] > 0:
+            attr, val = logicinfo[key[0]]
+            fuses.setdefault(attr_names[attr], {})[val] = bits
+    res = {}
+    for attr, vals in fuses.items():
+        set_bits = {(r, c) for bits in vals.values() for r, c in bits if tile[r][c] == 1}
+        for val, bits in vals.items():
+            if bits == set_bits:
+                res[attr] = val
+    return res
+
+def pllo_params(db, ttyp, tile):
+    av = pllo_attrvals(db, ttyp, tile)
+    if 'PDN' not in av:
+        # no PLL
+        return set()
+    val_names = {num: name for name, num in attrids.pll_attrvals.items()}
+    def flag(attr):
+        return '"TRUE"' if attr in av else '"FALSE"'
+
+    params = {}
+    # The input frequency is not in the bitstream, only the range of the PFD
+    # frequency. Take the top of the range.
+    idiv = av.get('IDIV', 64)
+    for fref in range(400, 2, -1):
+        idx = (fref - 1) // 30
+        if (idx == 13 and fref <= 395) or (idx == 14 and fref <= 430) or (idx == 15 and fref <= 465) or idx == 16:
+            idx -= 1
+        if (idx + 1) * 16 == av.get('FLDCOUNT'):
+            params['FCLKIN'] = f'"{fref * idiv}"'
+            break
+    params['IDIV_SEL'] = idiv - 1
+    params['DYN_IDIV_SEL'] = flag('IDIVSEL')
+    params['FBDIV_SEL'] = av.get('FDIV', 64) - 1
+    params['DYN_FBDIV_SEL'] = flag('FDIVSEL')
+    for ch in "ABCD":
+        params[f'ODIV{ch}_SEL'] = av.get(f'DIV{ch}', 128)
+        params[f'DYN_ODIV{ch}_SEL'] = flag(f'DIV{ch}_SEL')
+        params[f'CLKOUT{ch}_EN'] = flag(f'CK{ch}')
+        src = val_names[av[f'CK{ch}_IN']]
+        params[f'CLK{ch}_IN_SEL'] = {'VCO': "2'b00", 'CASCADE': "2'b10", 'BYPASS': "2'b11"}[src]
+        params[f'CLK{ch}_OUT_SEL'] = "1'b1" if f'CK{ch}_OUT' in av else "1'b0"
+        if ch != 'A':
+            params[f'PS{ch}_COARSE'] = av.get(f'PS{ch}_COARSE', 128)
+            params[f'PS{ch}_FINE'] = av.get(f'PS{ch}_FINE', 8) - 1
+            params[f'DYN_PS{ch}_SEL'] = flag(f'PS{ch}_SEL')
+            params[f'DTMS_EN{ch}'] = flag(f'DTMS_EN{ch}')
+    for ch in "AB":
+        trim = val_names[av[f'DUTY_TRIM_{ch}']]
+        params[f'CLKOUT{ch}_DT_DIR'] = "1'b1" if trim[0] == 'P' else "1'b0"
+        params[f'CLKOUT{ch}_DT_STEP'] = int(trim[1:]) // 50
+        params[f'DYN_DT{ch}_SEL'] = flag(f'DT{ch}_SEL')
+    params['DYN_DPA_EN'] = flag('DPAEN')
+    params['RESET_I_EN'] = '"TRUE"' if av.get('IRSTEN') == attrids.pll_attrvals['ENABLE'] else '"FALSE"'
+    params['RESET_S_EN'] = '"TRUE"' if av.get('SRSTEN') == attrids.pll_attrvals['ENABLE'] else '"FALSE"'
+    params['ICP_SEL'] = f"5'b{av.get('ICPSEL', 10) // 10 - 1:05b}"
+    params['DYN_ICP_SEL'] = flag('ICPDYN_SEL')
+    lpr = 0
+    if 'LPR' in av:
+        lpr = 1 << (int(val_names[av['LPR']][1:]) - 1)
+    params['LPR_REF'] = f"7'b{lpr:07b}"
+    params['DYN_RES_SEL'] = flag('LPR_SEL')
+    params['CLKFB_SEL'] = '"INTERNAL"' if av.get('FBSEL') == attrids.pll_attrvals['CLKFB3'] else '"EXTERNAL"'
+    # for the ports
+    params['INSEL'] = val_names.get(av.get('INSEL'), 'UNKNOWN')
+    return {f'{param}={val}' for param, val in params.items()}
+
 _osc_attrs = {
         'MCLKCIB': 'FREQ_DIV',
         'OSCREG': 'REGULATOR_EN'
@@ -400,6 +476,13 @@ def parse_tile_(db, row, col, tile, bm=None, default=True, noiostd = True):
                     modes.add(attrval)
             if modes:
                 bels[f'{name}{idx}'] = modes
+            continue
+        if name == "PLLO":
+            # the fuses are in the cell below
+            if bm and (row + 1, col) in bm:
+                modes = pllo_params(db, db[row + 1, col].ttyp, bm[row + 1, col])
+                if modes:
+                    bels[name] = modes
             continue
         if name == "PLLVR":
             idx = _pll_cells.setdefault(get_pll_A(db, row, col, 'A'), len(_pll_cells))
@@ -954,7 +1037,7 @@ def tile2verilog(dbrow, dbcol, bels, pips, clock_pips, mod, cst, db):
         mod.wires.update({srcg, destg})
         mod.assigns.append((destg, srcg))
 
-    belre = re.compile(r"(IOB|LUT|DFF|BANK|CFG|ALU|RAM16|ODDR|OSC[ZFHWO]?|BUFS|RPLL[AB]|PLLVR|IOLOGIC|BSRAM|DSP)(\w*)")
+    belre = re.compile(r"(IOB|LUT|DFF|BANK|CFG|ALU|RAM16|ODDR|OSC[ZFHWO]?|BUFS|RPLL[AB]|PLLVR|PLLO|IOLOGIC|BSRAM|DSP)(\w*)")
     bels_items = move_iologic(bels)
 
     iologic_detected = set()
@@ -1065,6 +1148,20 @@ def tile2verilog(dbrow, dbcol, bels, pips, clock_pips, mod, cst, db):
             portmap = db[dbrow, dbcol].bels[bel[:-1]].portmap
             for port, wname in portmap.items():
                 pll.portmap[port] = f"R{row}C{col}_{wname}"
+        elif typ == "PLLO":
+            name = "PLL_0"
+            pll = mod.primitives.setdefault(name, codegen.Primitive("PLLO", name))
+            for paramval in flags:
+                param, _, val = paramval.partition('=')
+                pll.params[param] = val
+            portmap = db[dbrow, dbcol].bels[bel].portmap
+            for port, wname in portmap.items():
+                if wname.startswith('PLLO'):
+                    # the wire is in another cell
+                    (wrow, wcol, wname), = [w for w in db.nodes[f'X{dbcol}Y{dbrow}/{wname}'][1] if w[2] != wname]
+                    pll.portmap[port] = f"R{wrow + 1}C{wcol + 1}_{wname}"
+                else:
+                    pll.portmap[port] = f"R{row}C{col}_{wname}"
         elif typ.startswith("BSRAM"):
             #print(dbrow, dbcol, typ, bel, idx)
             if idx.startswith("_AUX"):
@@ -1315,7 +1412,34 @@ def fix_pll_ports(pll):
                 port.append(pll.portmap[f'{portname}{n}'])
                 pll.portmap.pop(f'{portname}{n}')
 
+_pllo_buses = [('FBDSEL', 6), ('IDSEL', 6), ('ODSELA', 7), ('ODSELB', 7), ('ODSELC', 7), ('ODSELD', 7),
+               ('DTA', 4), ('DTB', 4), ('ICPSEL', 5), ('LPFRES', 3), ('PSSEL', 2)]
+def fix_pllo(db, pll):
+    insel = pll.params.pop('INSEL')
+    if insel == 'CLKIN0':
+        # dedicated pin
+        loc, = [loc for loc, pad in db.pad_pll.items() if pad[2] == 'CLKIN_T']
+        row, col, bel_idx = tbrl2rc(db, loc)
+        wire = db[row, col].bels[f'IOB{bel_idx}'].portmap['O']
+        pll.portmap['CLKIN'] = f'R{row + 1}C{col + 1}_{wire}'
+    elif insel != 'CLKIN1':
+        del pll.portmap['CLKIN']
+    if pll.params['CLKFB_SEL'] == '"INTERNAL"':
+        del pll.portmap['CLKFB']
+    # the IDE does not route these when they are not used
+    for port, dyn in [('IDSEL', 'DYN_IDIV_SEL'), ('FBDSEL', 'DYN_FBDIV_SEL')]:
+        if pll.params[dyn] != '"TRUE"':
+            for n in range(6):
+                del pll.portmap[f'{port}{n}']
+    mod_wires = set(pll.portmap.values())
+    for port, width in _pllo_buses:
+        if f'{port}0' in pll.portmap:
+            pll.portmap[port] = [pll.portmap.pop(f'{port}{n}') for n in reversed(range(width))]
+    return mod_wires
+
 def fix_plls(db, mod):
+    for pll in [pr for pr in mod.primitives.values() if pr.typ == 'PLLO']:
+        mod.wires.update(fix_pllo(db, pll))
     for pll_name, pll in [pr for pr in mod.primitives.items() if pr[1].typ in {'rPLL', 'PLLVR'}]:
         if 'INSEL' not in pll.params.keys():
             del mod.primitives[pll_name]
