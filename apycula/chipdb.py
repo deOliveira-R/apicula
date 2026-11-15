@@ -535,6 +535,43 @@ def create_vcc_pips(dev, tiles):
                         srcs_fuse[0].discard('Q7')
                         tile.alonenode[dest][idx] = (srcs_fuse[0] | {'VCC'}, srcs_fuse[1])
 
+# Tile types whose slice 3 has a register: their CLS3 table has the register
+# attributes of the other slices, not just the SSRAM mode row.
+def slice3_reg_ttypes(fse):
+    cls3 = next(num for num, name in _known_tables.items() if name == 'CLS3')
+    return {ttyp for ttyp, tables in fse.items()
+            if ttyp != 'header' and len(tables.get('shortval', {}).get(cls3, [])) > 1}
+
+# Where slice 3 has a register (GW1N-2) Q6 and Q7 are not constants: Q6 is the
+# output of DFF6, and on hardware a wire left on Q7 does not stay at 1 when
+# LUT7 is in use. The vendor never takes a constant from them. Its constant on
+# X03, X04, X07 and X08 is the wire taken off Q6/Q7 with no other source
+# selected: the fuse of the Q6/Q7 row with a negative source, plus the
+# alonenode fuse. It feeds the carry chains of vendor bitstreams that way, so
+# the wire reads as 1. The pips from Q6 and Q7 themselves are dropped.
+# See doc/agent/gw1n2-slice3.md.
+def create_slice3_vcc_pips(dev, fse, device, tiles):
+    table = _wire_tables['GENERAL']
+    qs = {'Q6', 'Q7'}
+    reg_ttypes = slice3_reg_ttypes(fse)
+    for ttyp, tile in tiles.items():
+        if ttyp not in reg_ttypes or ttyp not in dev.tile_types['C'] | dev.tile_types['M']:
+            continue
+        off = {} # dest -> fuses that take it off Q6/Q7
+        for srcid, destid, *fuses in fse[ttyp]['wire'].get(table, []):
+            if srcid < 0 and wnames.wirenames[-srcid] in qs:
+                off.setdefault(wnames.wirenames[destid], set()).update(
+                        fuse.fuse_lookup(fse, ttyp, f, device) for f in unpad(fuses))
+        for src_fuses in tile.pips.values():
+            for q in qs:
+                src_fuses.pop(q, None)
+        for dest, srcs_fuses in tile.alonenode.items():
+            for srcs, bits in srcs_fuses:
+                if srcs & qs:
+                    srcs -= qs
+                    if dest in {'X03', 'X04', 'X07', 'X08'} and dest in off:
+                        tile.pips.setdefault(dest, {})['VCC'] = off[dest] | bits
+
 def fse_alonenode(fse, ttyp, device, table = _wire_tables['ALONE_NODE_6']):
     pips = {}
     if 'alonenode' in fse[ttyp].keys():
@@ -4752,6 +4789,7 @@ def from_fse(device, fse, dat: Datfile):
 
     # GW5 series have DFF6 and DFF7, so leave Q6 and Q7 as is
     if device not in {'GW5A-25A', 'GW5AT-60B', 'GW5AST-138C'}:
+        create_slice3_vcc_pips(dev, fse, device, tiles)
         create_vcc_pips(dev, tiles)
     create_default_pips(tiles)
 
