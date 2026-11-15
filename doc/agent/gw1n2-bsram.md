@@ -19,7 +19,7 @@ of row 9 here (tile types 39, 40, 41). Init data and configuration fuses of a
 
 ## Sweep (site 0)
 
-81 configurations build in both flows; all 81 match in init data and in the
+79 configurations build in both flows; all 79 match in init data and in the
 `BSRAM_*` fuses:
 
 - `pROM` 1, 2, 4, 8, 16, 32 bit and `pROMX9` 9, 18, 36 bit, `READ_MODE` 0 and 1;
